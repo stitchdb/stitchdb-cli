@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Studio · __PROJECT__</title>
+<style>
+:root{--bg:#fff;--fg:#14171f;--muted:#5d6472;--line:#e4e7ec;--panel:#f7f8fa;--accent:#3a5bd9;--bad:#c62f3a;--ok:#1f8a4c;--code:#f2f4f7}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e8eaee;--muted:#9aa1ad;--line:#262a33;--panel:#161920;--accent:#7d97ff;--bad:#ff6b76;--ok:#4ccf86;--code:#1b1f27}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line)}
+header b{font-size:15px}header .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:1px 8px}
+nav{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}nav button{background:none;border:1px solid transparent;color:var(--fg);padding:5px 10px;border-radius:6px;cursor:pointer;font:inherit}
+nav button[aria-pressed=true]{background:var(--panel);border-color:var(--line)}
+main{display:grid;grid-template-columns:220px 1fr;min-height:calc(100vh - 50px)}
+aside{border-right:1px solid var(--line);padding:10px;overflow:auto;background:var(--panel)}aside a{display:block;padding:4px 8px;border-radius:5px;color:var(--fg);text-decoration:none;font-size:13px}
+aside a[aria-current]{background:var(--bg);font-weight:600}section{padding:16px;overflow:auto;min-width:0}
+table{border-collapse:collapse;font-size:13px;width:max-content;min-width:100%}th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+th{background:var(--panel);position:sticky;top:0}td.null{color:var(--muted);font-style:italic}
+textarea{width:100%;min-height:160px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px}
+.btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;font:inherit}.muted{color:var(--muted)}.err{color:var(--bad);white-space:pre-wrap}
+code,.kv dd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}.kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px}.kv dd{margin:0;word-break:break-all;background:var(--code);padding:3px 6px;border-radius:5px}
+.wrap{overflow:auto;max-height:calc(100vh - 150px);border:1px solid var(--line);border-radius:8px}
+@media (max-width:700px){main{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid var(--line);max-height:30vh}}
+</style>
+</head>
+<body>
+<header><b>StitchDB</b><span class="tag">Local · __PROJECT__</span>
+<nav aria-label="Sections"><button data-v="tables" aria-pressed="true">Tables</button><button data-v="sql">SQL</button><button data-v="users">Users</button><button data-v="buckets">Storage</button><button data-v="connect">Connect</button></nav></header>
+<main><aside id="side" aria-label="Tables"></aside><section id="view" aria-live="polite"></section></main>
+<script>
+const API='__API_URL__',SERVICE='__SERVICE_KEY__',ANON='__ANON_KEY__',MAIL='__MAIL_URL__';
+const H={apikey:SERVICE,Authorization:'Bearer '+SERVICE,'Content-Type':'application/json'};
+const $=(s)=>document.querySelector(s),esc=(s)=>String(s??'').replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const qi=(s)=>'"'+String(s).replace(/"/g,'""')+'"';
+async function call(path,opt={}){const r=await fetch(API+path,{...opt,headers:{...H,...(opt.headers||{})}});const t=await r.text();let d;try{d=t?JSON.parse(t):null}catch{d=t}if(!r.ok)throw new Error((d&&(d.error||d.message||d.msg))||('HTTP '+r.status));return d}
+const sql=(q)=>call('/pg/query',{method:'POST',body:JSON.stringify({query:q})});
+function grid(rows){if(!Array.isArray(rows)||!rows.length)return'<p class="muted">No rows.</p>';const cols=Object.keys(rows[0]);
+return'<div class="wrap"><table><thead><tr>'+cols.map((c)=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+rows.map((r)=>'<tr>'+cols.map((c)=>r[c]===null?'<td class="null">NULL</td>':'<td title="'+esc(typeof r[c]==='object'?JSON.stringify(r[c]):r[c])+'">'+esc(typeof r[c]==='object'?JSON.stringify(r[c]):r[c])+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'}
+let tables=[],current=null;
+async function loadTables(){try{tables=await call('/pg/tables?included_schemas=public');}catch(e){tables=[];$('#side').innerHTML='<p class="err">'+esc(e.message)+'</p>';return}
+$('#side').innerHTML=tables.length?tables.map((t)=>'<a href="#'+esc(t.schema+'.'+t.name)+'" data-t="'+esc(t.schema+'.'+t.name)+'"'+(current===t.schema+'.'+t.name?' aria-current="page"':'')+'>'+esc(t.name)+(t.rls_enabled?'':' <span class="muted" title="Row Level Security is off">· RLS off</span>')+'</a>').join(''):'<p class="muted">No tables in public yet. Create one in SQL or with a migration.</p>'}
+async function showTable(id){current=id;loadTables();const[s,n]=id.split('.');$('#view').innerHTML='<h2>'+esc(n)+'</h2><p class="muted">First 100 rows</p><div id="g">Loading…</div>';
+try{$('#g').innerHTML=grid(await sql('select * from '+qi(s)+'.'+qi(n)+' limit 100'))}catch(e){$('#g').innerHTML='<p class="err">'+esc(e.message)+'</p>'}}
+const views={
+tables(){$('#view').innerHTML='<h2>Tables</h2><p class="muted">Pick a table on the left.</p>';loadTables()},
+sql(){$('#view').innerHTML='<h2>SQL</h2><textarea id="q" spellcheck="false" aria-label="SQL">'+esc(localStorage.getItem('sdb-local-sql')||'select now();')+'</textarea><p><button class="btn" id="run">Run</button> <span class="muted">Ctrl/⌘ + Enter</span></p><div id="r"></div>';
+const run=async()=>{const q=$('#q').value;try{localStorage.setItem('sdb-local-sql',q)}catch{}$('#r').textContent='Running…';try{const d=await sql(q);$('#r').innerHTML=grid(Array.isArray(d)?d:[]);loadTables()}catch(e){$('#r').innerHTML='<p class="err">'+esc(e.message)+'</p>'}};
+$('#run').onclick=run;$('#q').onkeydown=(e)=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run()}},
+async users(){$('#view').innerHTML='<h2>Users</h2><div id="g">Loading…</div>'+(MAIL?'<p class="muted">Emails sent by Auth (sign-up confirmations, magic links, resets) land in the <a href="'+MAIL+'" target="_blank" rel="noopener">mail catcher</a>.</p>':'');
+try{const d=await call('/auth/v1/admin/users?per_page=100');$('#g').innerHTML=grid((d.users||[]).map((u)=>({id:u.id,email:u.email,phone:u.phone||null,created_at:u.created_at,last_sign_in_at:u.last_sign_in_at||null,confirmed:!!(u.email_confirmed_at||u.confirmed_at)})))}catch(e){$('#g').innerHTML='<p class="err">'+esc(e.message)+'</p>'}},
+async buckets(){$('#view').innerHTML='<h2>Storage buckets</h2><div id="g">Loading…</div>';try{$('#g').innerHTML=grid((await call('/storage/v1/bucket')).map((b)=>({name:b.name,public:b.public,file_size_limit:b.file_size_limit,created_at:b.created_at})))}catch(e){$('#g').innerHTML='<p class="err">'+esc(e.message)+'</p>'}},
+connect(){$('#view').innerHTML='<h2>Connect</h2><dl class="kv"><dt>API URL</dt><dd>'+esc(API)+'</dd><dt>anon key</dt><dd>'+esc(ANON)+'</dd><dt>service_role key</dt><dd>'+esc(SERVICE)+'</dd><dt>Functions</dt><dd>'+esc(API)+'/functions/v1/&lt;name&gt;</dd>'+(MAIL?'<dt>Mail catcher</dt><dd>'+esc(MAIL)+'</dd>':'')+'</dl><p class="muted">These keys only work on this machine. Run <code>stitchdb status</code> for the database URL.</p>'},
+};
+function show(v){document.querySelectorAll('nav button').forEach((b)=>b.setAttribute('aria-pressed',String(b.dataset.v===v)));views[v]()}
+document.querySelector('nav').onclick=(e)=>{const b=e.target.closest('button');if(b){current=null;show(b.dataset.v)}};
+$('#side').onclick=(e)=>{const a=e.target.closest('a[data-t]');if(a){e.preventDefault();document.querySelectorAll('nav button').forEach((b)=>b.setAttribute('aria-pressed',String(b.dataset.v==='tables')));showTable(a.dataset.t)}};
+show('tables');
+</script>
+</body>
+</html>

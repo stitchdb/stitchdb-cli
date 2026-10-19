@@ -1,0 +1,3 @@
+-- Seed data for local development and preview branches (never runs on your production project).
+-- Runs after all migrations. Example:
+-- insert into public.todos (title) values ('First todo'), ('Second todo');

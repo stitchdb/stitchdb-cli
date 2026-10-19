@@ -1,0 +1,4 @@
+# StitchDB CLI (local state; never commit)
+.temp/
+.branches/
+functions/.env

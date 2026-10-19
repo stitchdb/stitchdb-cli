@@ -1,0 +1,42 @@
+# StitchDB project configuration. Used by "stitchdb start" (local development) and the CLI.
+# Docs: https://stitchdb.com/docs/cli/local-development
+
+# A name for this app; local containers and volumes are named after it.
+project_id = "__PROJECT_ID__"
+
+[api]
+# Local API gateway: REST, Auth, Storage, Realtime and Edge Functions on http://127.0.0.1:<port>.
+port = 54321
+# Schemas exposed by the REST API.
+schemas = ["public"]
+
+[db]
+# Local Postgres (connect with psql or any client).
+port = 54322
+major_version = 17
+
+[db.seed]
+# Runs after the migrations on "stitchdb start" (first start) and "stitchdb db reset", and when a preview branch is created.
+sql_path = "seed.sql"
+
+[studio]
+# Local Studio (tables, SQL, users, storage).
+port = 54323
+
+[mail]
+# Every email Auth sends locally (confirmations, magic links, password resets) is caught here.
+port = 54324
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+# Locally, sign-ups are confirmed automatically unless this is true.
+enable_confirmations = false
+
+# Per-function settings, for example:
+# [functions.hello]
+# verify_jwt = false

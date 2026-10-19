@@ -1,0 +1,94 @@
+# StitchDB preview branches + production deploys (written by "stitchdb init --github").
+# Docs: https://stitchdb.com/docs/cli/ci
+#
+# Setup (once, in your GitHub repository settings):
+#   Secrets  → STITCHDB_ACCESS_TOKEN  a read-write access token (StitchDB dashboard → Account → Access tokens)
+#   Variables → STITCHDB_PROJECT_REF   your production project's reference
+#
+# Pull request opened / updated -> a preview branch (its own database, URL and keys) gets the PR's migrations and
+#                                  functions; the PR gets a comment with its URL.
+# Pull request closed           -> the preview branch is deleted.
+# Push to the default branch    -> migrations and functions go to production.
+name: StitchDB
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+
+concurrency:
+  group: stitchdb-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  STITCHDB_ACCESS_TOKEN: ${{ secrets.STITCHDB_ACCESS_TOKEN }}
+  STITCHDB_PROJECT_REF: ${{ vars.STITCHDB_PROJECT_REF }}
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the StitchDB CLI
+        run: npm install -g https://stitchdb.com/cli/stitchdb.tgz
+      - name: Create or update the preview branch
+        id: branch
+        run: |
+          stitchdb branches create "${{ github.head_ref }}" --wait --json > branch.json
+          echo "ref=$(jq -r .ref branch.json)" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .api_url branch.json)" >> "$GITHUB_OUTPUT"
+      - name: Push migrations
+        run: stitchdb db push --project-ref "${{ steps.branch.outputs.ref }}" --yes
+      - name: Deploy functions
+        run: stitchdb functions deploy --all --project-ref "${{ steps.branch.outputs.ref }}" --if-present
+      - name: Comment the preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- stitchdb-preview -->';
+            const body = `${marker}\n**StitchDB preview branch** for \`${{ github.head_ref }}\` is ready.\n\n` +
+              `| | |\n|---|---|\n| API URL | ${{ steps.branch.outputs.url }} |\n| Project ref | \`${{ steps.branch.outputs.ref }}\` |\n` +
+              `| Dashboard | https://stitchdb.com/dashboard/project/${{ steps.branch.outputs.ref }} |\n\n` +
+              `Keys: \`stitchdb projects api-keys --project-ref ${{ steps.branch.outputs.ref }}\``;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const mine = comments.find((c) => c.body && c.body.includes(marker));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the StitchDB CLI
+        run: npm install -g https://stitchdb.com/cli/stitchdb.tgz
+      - name: Delete the preview branch
+        run: stitchdb branches delete "${{ github.head_ref }}" --yes --if-exists
+
+  production:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the StitchDB CLI
+        run: npm install -g https://stitchdb.com/cli/stitchdb.tgz
+      - name: Push migrations to production
+        run: stitchdb db push --yes
+      - name: Deploy functions to production
+        run: stitchdb functions deploy --all --if-present

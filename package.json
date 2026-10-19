@@ -1,0 +1,32 @@
+{
+  "name": "stitchdb-cli",
+  "version": "1.0.0",
+  "description": "StitchDB CLI: local development, migrations, type generation, Edge Functions and preview branches",
+  "license": "MIT",
+  "homepage": "https://stitchdb.com/docs/cli",
+  "bin": {
+    "stitchdb": "bin/stitchdb.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "stitchdb",
+    "postgres",
+    "cli",
+    "migrations",
+    "edge-functions"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stitchdb/stitchdb-cli.git"
+  },
+  "bugs": "https://github.com/stitchdb/stitchdb-cli/issues"
+}
