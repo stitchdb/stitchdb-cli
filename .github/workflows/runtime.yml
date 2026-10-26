@@ -144,6 +144,29 @@ jobs:
           cp "$RUNNER_TEMP/auth" "$S/bin/auth"
           cp -R "$GITHUB_WORKSPACE/_auth/migrations" "$S/auth/migrations"
 
+          # License notices of everything redistributed in the bundle
+          L="$S/licenses"; mkdir -p "$L"
+          get() { curl -fsSL --retry 3 "$2" -o "$L/$1"; }
+          get postgresql.txt "https://raw.githubusercontent.com/postgres/postgres/REL_${PG_VERSION//./_}/COPYRIGHT"
+          get pgvector.txt "https://raw.githubusercontent.com/pgvector/pgvector/v${PGVECTOR_VERSION}/LICENSE"
+          get pg_cron.txt "https://raw.githubusercontent.com/citusdata/pg_cron/v${PGCRON_VERSION}/LICENSE"
+          get postgrest.txt "https://raw.githubusercontent.com/PostgREST/postgrest/${POSTGREST_VERSION}/LICENSE"
+          cp "$GITHUB_WORKSPACE/_auth/LICENSE" "$L/auth.txt"
+          get openssl.txt "https://raw.githubusercontent.com/openssl/openssl/master/LICENSE.txt"
+          get zlib.txt "https://raw.githubusercontent.com/madler/zlib/master/LICENSE"
+          get libuuid.txt "https://raw.githubusercontent.com/util-linux/util-linux/master/Documentation/licenses/COPYING.BSD-3-Clause"
+          get gmp-lgpl-3.0.txt "https://www.gnu.org/licenses/lgpl-3.0.txt"
+          printf '%s\n' \
+            "This runtime bundles open-source software, unmodified, each under its own license (texts in this folder):" \
+            "  PostgreSQL ${PG_VERSION} with contrib (pg/)            PostgreSQL License   postgresql.txt" \
+            "  pgvector ${PGVECTOR_VERSION}                           PostgreSQL License   pgvector.txt" \
+            "  pg_cron ${PGCRON_VERSION}                              PostgreSQL License   pg_cron.txt" \
+            "  PostgREST ${POSTGREST_VERSION} (bin/postgrest)         MIT                  postgrest.txt" \
+            "  Auth server ${AUTH_VERSION} (bin/auth, auth/)          MIT                  auth.txt (its Go dependencies keep their own licenses: see https://github.com/supabase/auth/blob/${AUTH_VERSION}/go.mod)" \
+            "  OpenSSL 3, zlib, libuuid as shared libraries in pg/lib Apache-2.0, zlib, BSD-3-Clause" \
+            "  GMP (linux-arm64 only, pg/lib/libgmp.so.10)            LGPL-3.0, unmodified, from Ubuntu 22.04 (source: https://gmplib.org)" \
+            > "$L/README.txt"
+
       - name: Make relocatable (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -251,7 +274,7 @@ jobs:
           cat "$S/VERSION.json"
           mkdir -p "$GITHUB_WORKSPACE/_out"
           T="$GITHUB_WORKSPACE/_out/stitchdb-runtime-${PLATFORM}.tar.gz"
-          tar -C "$S" -czf "$T" VERSION.json pg bin auth
+          tar -C "$S" -czf "$T" VERSION.json pg bin auth licenses
           cd "$GITHUB_WORKSPACE/_out"
           if command -v sha256sum >/dev/null; then sha256sum "$(basename "$T")" > "$(basename "$T").sha256"
           else shasum -a 256 "$(basename "$T")" > "$(basename "$T").sha256"; fi

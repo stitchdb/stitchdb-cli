@@ -1,7 +1,7 @@
 # StitchDB project configuration. Used by "stitchdb start" (local development) and the CLI.
 # Docs: https://stitchdb.com/docs/cli/local-development
 
-# A name for this app; local containers and volumes are named after it.
+# A name for this app, shown by "stitchdb status".
 project_id = "__PROJECT_ID__"
 
 [api]
@@ -26,6 +26,10 @@ port = 54323
 [mail]
 # Every email Auth sends locally (confirmations, magic links, password resets) is caught here.
 port = 54324
+
+[local]
+# Services other than Postgres start on their first request and stop after this many idle minutes ("stitchdb start --eager" keeps them running).
+idle_minutes = 10
 
 [auth]
 site_url = "http://localhost:3000"

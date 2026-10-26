@@ -10,12 +10,12 @@ const pkg = require('../package.json');
 const COMMANDS = require('../lib/commands');
 
 const GLOBAL = {
-  json: { type: 'boolean' }, debug: { type: 'boolean' }, help: { type: 'boolean', alias: 'h' }, version: { type: 'boolean', alias: 'v' },
+  json: { type: 'boolean' }, output: { type: 'string' }, debug: { type: 'boolean' }, help: { type: 'boolean', alias: 'h' }, version: { type: 'boolean', alias: 'v' },
   projectRef: { type: 'string' }, workdir: { type: 'string' }, yes: { type: 'boolean', alias: 'y' },
 };
 const GLOBAL_HELP = `  --project-ref <ref>   Project to work on (default: the linked project, or STITCHDB_PROJECT_REF)
   --workdir <dir>       Folder that contains stitchdb/ (default: current folder or a parent)
-  --json                Machine-readable output
+  --json                Machine-readable output (also: --output json)
   -y, --yes             Answer yes to confirmations
   --debug               Show HTTP requests and commands
   -h, --help            Help for a command`;
@@ -53,7 +53,7 @@ async function main() {
   const { name, rest } = resolve(argv);
   const cmd = name && COMMANDS[name];
   const pre = parse(argv, GLOBAL).flags;
-  U.state.json = !!pre.json; U.state.debug = !!pre.debug;
+  U.state.json = !!pre.json || pre.output === 'json'; U.state.debug = !!pre.debug;
   if (pre.version && !name) { console.log(pkg.version); return; }
   if (!name) { process.stdout.write(mainHelp()); return; }
   if (!cmd) {
@@ -66,6 +66,11 @@ async function main() {
   }
   const { flags, pos } = parse(rest, { ...GLOBAL, ...(cmd.flags || {}) });
   if (flags.help) { process.stdout.write(cmdHelp(name, cmd)); return; }
+  // --output json|pretty (commands with their own --output, like "gen types -o <file>", keep theirs).
+  if (!cmd.flags?.output && flags.output !== undefined) {
+    if (!['json', 'pretty', 'text'].includes(flags.output)) U.fail(`--output is json or pretty (got "${flags.output}").`);
+    if (flags.output === 'json') flags.json = true;
+  }
   U.state.json = !!flags.json; U.state.debug = !!flags.debug;
   const data = await cmd.run({ flags, args: pos });
   if (data !== undefined && U.state.json) U.output(data);
