@@ -271,7 +271,7 @@ jobs:
               while read -r name path; do
                 case "$name" in linux-vdso.so*|ld-linux*|libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libutil.so*|libresolv.so*) continue ;; esac
                 case "$path" in "$R"/*) ;; *) echo "OUTSIDE BUNDLE: $f -> $name $path"; bad=1 ;; esac
-              done < <(echo "$out" | awk '/=>/ {print $1, $3}')
+              done < <(echo "$out" | sed -n 's/^[[:space:]]*\([^[:space:]]*\) => \(.*\) (0x[0-9a-f]*)$/\1 \2/p')
             else
               file -b "$f" | grep -q Mach-O || continue
               while read -r dep; do
