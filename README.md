@@ -14,6 +14,7 @@ stitchdb gen types typescript --linked -o src/database.types.ts
 stitchdb types --watch -o src/database.types.ts   # rewrite on every schema change
 stitchdb gen types swift --linked -o Sources/App/DatabaseTypes.swift
 stitchdb functions deploy
+stitchdb import "postgresql://…"   # copy another Postgres database in (live copy, then switch-over)
 ```
 
 Requires Node.js 18+ on macOS or Linux (Windows: use WSL). Local development needs no Docker: the first `stitchdb start`
