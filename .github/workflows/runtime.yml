@@ -1,0 +1,381 @@
+name: runtime
+
+# Builds the StitchDB local-development runtime: one relocatable tarball per
+# platform with Postgres (+ contrib, pgvector, pg_cron), PostgREST and Auth.
+# `stitchdb start` downloads and caches it, then runs plain processes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish GitHub release runtime-v1 with the tarballs and runtime-manifest.json"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  RUNTIME_VERSION: "1"
+  PG_VERSION: "17.6"
+  PGVECTOR_VERSION: "0.8.7"
+  PGCRON_VERSION: "1.6.8"
+  POSTGREST_VERSION: "v14.18"
+  AUTH_VERSION: "v2.197.0"
+  # bump to invalidate the cached Postgres build when the recipe changes
+  PG_BUILD_RECIPE: "r1"
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-22.04
+            postgrest: linux-static-x86-64
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+            postgrest: ubuntu-aarch64
+          - platform: darwin-arm64
+            runner: macos-14
+            postgrest: macos-aarch64
+          - platform: darwin-x64
+            runner: macos-15-intel
+            postgrest: macos-x86-64
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      # build prefix: must not contain "postgres"/"pgsql" so pkglibdir is lib/postgresql
+      PREFIX: ${{ github.workspace }}/_sdbrt/pg
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential pkg-config libssl-dev uuid-dev zlib1g-dev patchelf file curl
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "OPENSSL_PREFIX=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Restore Postgres build cache
+        id: pgcache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/_sdbrt/pg
+          key: pg${{ env.PG_VERSION }}-vector${{ env.PGVECTOR_VERSION }}-cron${{ env.PGCRON_VERSION }}-${{ matrix.platform }}-${{ env.PG_BUILD_RECIPE }}
+
+      - name: Build Postgres, contrib, pgvector, pg_cron
+        if: steps.pgcache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          SRC="$RUNNER_TEMP/src"; mkdir -p "$SRC"; cd "$SRC"
+          NPROC=$(getconf _NPROCESSORS_ONLN)
+          curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2" | tar xj
+          cd "postgresql-${PG_VERSION}"
+          EXTRA=()
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            EXTRA=(--with-includes="$OPENSSL_PREFIX/include" --with-libraries="$OPENSSL_PREFIX/lib")
+            export LDFLAGS="-Wl,-headerpad_max_install_names"
+          fi
+          ./configure --prefix="$PREFIX" \
+            --without-icu --without-readline --with-openssl --with-uuid=e2fs --with-zlib \
+            "${EXTRA[@]}"
+          make -j"$NPROC" -s
+          make -C contrib -j"$NPROC" -s
+          make install -s
+          make -C contrib install -s
+          export PATH="$PREFIX/bin:$PATH"
+          cd "$SRC"
+          curl -fsSL "https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz" | tar xz
+          # OPTFLAGS="" avoids -march=native so the build runs on any CPU of the arch
+          make -C "pgvector-${PGVECTOR_VERSION}" PG_CONFIG="$PREFIX/bin/pg_config" OPTFLAGS="" -j"$NPROC"
+          make -C "pgvector-${PGVECTOR_VERSION}" PG_CONFIG="$PREFIX/bin/pg_config" OPTFLAGS="" install
+          curl -fsSL "https://github.com/citusdata/pg_cron/archive/refs/tags/v${PGCRON_VERSION}.tar.gz" | tar xz
+          make -C "pg_cron-${PGCRON_VERSION}" PG_CONFIG="$PREFIX/bin/pg_config" -j"$NPROC"
+          make -C "pg_cron-${PGCRON_VERSION}" PG_CONFIG="$PREFIX/bin/pg_config" install
+          "$PREFIX/bin/pg_config" --pkglibdir --sharedir
+
+      - name: Checkout supabase/auth ${{ env.AUTH_VERSION }}
+        uses: actions/checkout@v4
+        with:
+          repository: supabase/auth
+          ref: ${{ env.AUTH_VERSION }}
+          path: _auth
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: _auth/go.mod
+          cache-dependency-path: _auth/go.sum
+
+      - name: Build auth
+        working-directory: _auth
+        run: |
+          set -euxo pipefail
+          CGO_ENABLED=0 go build -o "$RUNNER_TEMP/auth" -buildvcs=false -trimpath \
+            -ldflags "-s -w -X github.com/supabase/auth/internal/utilities.Version=${AUTH_VERSION}"
+
+      - name: Assemble bundle
+        run: |
+          set -euxo pipefail
+          S="$GITHUB_WORKSPACE/_stage"
+          rm -rf "$S"; mkdir -p "$S/pg/bin" "$S/bin" "$S/auth"
+          for b in postgres initdb pg_ctl psql pg_dump pg_isready pg_restore; do
+            cp "$PREFIX/bin/$b" "$S/pg/bin/"
+          done
+          cp -a "$PREFIX/lib" "$S/pg/lib"
+          cp -a "$PREFIX/share" "$S/pg/share"
+          # no headers, static libs, pgxs, docs or client libs we don't ship tools for
+          rm -rf "$S/pg/lib/pkgconfig" "$S/pg/lib/postgresql/pgxs" "$S/pg/share/doc" "$S/pg/share/man"
+          find "$S/pg/lib" -name '*.a' -delete
+          rm -f "$S/pg/lib"/libecpg* "$S/pg/lib"/libpgtypes*
+          chmod -R u+w "$S"
+
+          # PostgREST
+          curl -fsSL "https://github.com/PostgREST/postgrest/releases/download/${POSTGREST_VERSION}/postgrest-${POSTGREST_VERSION}-${{ matrix.postgrest }}.tar.xz" | tar xJ -C "$S/bin"
+          chmod 755 "$S/bin/postgrest"
+
+          # Auth
+          cp "$RUNNER_TEMP/auth" "$S/bin/auth"
+          cp -R "$GITHUB_WORKSPACE/_auth/migrations" "$S/auth/migrations"
+
+      - name: Make relocatable (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          S="$GITHUB_WORKSPACE/_stage"
+          is_sys() {
+            case "$1" in
+              linux-vdso.so*|linux-gate.so*|ld-linux*|libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libutil.so*|libresolv.so*) return 0 ;;
+            esac
+            return 1
+          }
+          is_elf() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(head -c4 "$1" | od -An -c | tr -d ' ')" = '177ELF' ]; }
+
+          # strip what we built
+          for f in "$S"/pg/bin/* "$S"/pg/lib/*.so* "$S"/pg/lib/postgresql/*.so; do
+            is_elf "$f" && strip --strip-unneeded "$f"
+          done
+
+          # bundle every non-glibc shared lib (repeat so deps of bundled libs are picked up)
+          for pass in 1 2 3 4; do
+            while IFS= read -r f; do
+              is_elf "$f" || continue
+              { ldd "$f" 2>/dev/null || true; } | awk '/=>/ {print $1, $3}' | while read -r name path; do
+                is_sys "$name" && continue
+                [ -e "$S/pg/lib/$name" ] && continue
+                if [ "$path" = "not" ] || [ ! -e "$path" ]; then echo "unresolved $name for $f"; exit 1; fi
+                echo "bundling $name from $path (needed by ${f#$S/})"
+                cp -L "$path" "$S/pg/lib/$name"; chmod 755 "$S/pg/lib/$name"
+              done
+            done < <(find "$S" -type f)
+          done
+
+          for f in "$S"/pg/bin/*; do is_elf "$f" && patchelf --set-rpath '$ORIGIN/../lib' "$f"; done
+          for f in "$S"/pg/lib/postgresql/*.so; do patchelf --set-rpath '$ORIGIN/..' "$f"; done
+          for f in "$S"/pg/lib/*.so*; do is_elf "$f" && patchelf --set-rpath '$ORIGIN' "$f"; done
+          if readelf -d "$S/bin/postgrest" | grep -q NEEDED; then
+            patchelf --set-rpath '$ORIGIN/../pg/lib' "$S/bin/postgrest"
+          fi
+          ls -la "$S/pg/lib"
+
+      - name: Make relocatable (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          S="$GITHUB_WORKSPACE/_stage"
+          L="$S/pg/lib"
+          is_macho() { [ -f "$1" ] && [ ! -L "$1" ] && file -b "$1" | grep -q 'Mach-O'; }
+
+          for f in "$S"/pg/bin/* "$L"/*.dylib "$L"/postgresql/*.dylib "$L"/postgresql/*.so; do
+            is_macho "$f" && strip -x "$f"
+          done
+
+          # rewrite every non-system dependency to <loader-relative dir>/<name>, copying it into pg/lib
+          # (direct @loader_path refs: no LC_RPATH needed, and they are shorter than the originals)
+          fix_deps() {
+            local f="$1" ref="$2" self dep name
+            self=$(otool -D "$f" | sed -n 2p)
+            otool -L "$f" | tail -n +2 | awk '{print $1}' | while read -r dep; do
+              case "$dep" in /usr/lib/*|/System/*|@*) continue ;; esac
+              [ "$dep" = "$self" ] && continue
+              name=$(basename "$dep")
+              if [ ! -e "$L/$name" ]; then
+                [ -e "$dep" ] || { echo "unresolved $dep for $f"; exit 1; }
+                echo "bundling $name from $dep (needed by ${f#$S/})"
+                cp -L "$dep" "$L/$name"; chmod 755 "$L/$name"
+                strip -x "$L/$name" || true
+              fi
+              install_name_tool -change "$dep" "$ref/$name" "$f"
+            done
+          }
+
+          for f in "$S"/pg/bin/*; do is_macho "$f" && fix_deps "$f" '@loader_path/../lib'; done
+          for f in "$L"/postgresql/*.dylib "$L"/postgresql/*.so; do is_macho "$f" && fix_deps "$f" '@loader_path/..'; done
+          fix_deps "$S/bin/postgrest" '@loader_path/../pg/lib'
+          # bundled/own dylibs, repeated so deps of newly bundled libs are fixed too
+          for pass in 1 2 3; do
+            for f in "$L"/*.dylib; do
+              is_macho "$f" || continue
+              install_name_tool -id "@rpath/$(basename "$f")" "$f"
+              fix_deps "$f" '@loader_path'
+            done
+          done
+
+          # install_name_tool invalidates signatures; re-sign ad hoc
+          while IFS= read -r f; do
+            is_macho "$f" && codesign --force -s - "$f"
+          done < <(find "$S" -type f)
+          ls -la "$L"
+          otool -L "$S/bin/postgrest" "$S/pg/bin/psql" "$L"/libssl*.dylib "$L"/postgresql/pgcrypto.*
+
+      - name: Write VERSION.json and pack
+        run: |
+          set -euxo pipefail
+          S="$GITHUB_WORKSPACE/_stage"
+          cat > "$S/VERSION.json" <<JSON
+          {"runtime":"${RUNTIME_VERSION}","postgres":"${PG_VERSION}","pgvector":"${PGVECTOR_VERSION}","pg_cron":"${PGCRON_VERSION}","postgrest":"${POSTGREST_VERSION}","auth":"${AUTH_VERSION}","platform":"${PLATFORM}"}
+          JSON
+          cat "$S/VERSION.json"
+          mkdir -p "$GITHUB_WORKSPACE/_out"
+          T="$GITHUB_WORKSPACE/_out/stitchdb-runtime-${PLATFORM}.tar.gz"
+          tar -C "$S" -czf "$T" VERSION.json pg bin auth
+          cd "$GITHUB_WORKSPACE/_out"
+          if command -v sha256sum >/dev/null; then sha256sum "$(basename "$T")" > "$(basename "$T").sha256"
+          else shasum -a 256 "$(basename "$T")" > "$(basename "$T").sha256"; fi
+          ls -la; cat ./*.sha256
+
+      - name: Self-test extracted bundle
+        run: |
+          set -euo pipefail
+          T="$GITHUB_WORKSPACE/_out/stitchdb-runtime-${PLATFORM}.tar.gz"
+          W=$(mktemp -d "${RUNNER_TEMP}/rtXXXXXX")
+          R="$W/some dir/runtime"   # a space in the path on purpose
+          mkdir -p "$R"; tar -xzf "$T" -C "$R"
+          SOCK=$(mktemp -d /tmp/sdbsockXXXX)
+          PORT=55720
+          cd /
+
+          echo "== dependency check"
+          bad=0
+          while IFS= read -r f; do
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              [ "$(head -c4 "$f" | od -An -c | tr -d ' ')" = '177ELF' ] || continue
+              out=$(ldd "$f" 2>&1 || true)
+              if echo "$out" | grep -q 'not found'; then echo "MISSING in $f:"; echo "$out"; bad=1; fi
+              while read -r name path; do
+                case "$name" in linux-vdso.so*|ld-linux*|libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libutil.so*|libresolv.so*) continue ;; esac
+                case "$path" in "$R"/*) ;; *) echo "OUTSIDE BUNDLE: $f -> $name $path"; bad=1 ;; esac
+              done < <(echo "$out" | awk '/=>/ {print $1, $3}')
+            else
+              file -b "$f" | grep -q Mach-O || continue
+              while read -r dep; do
+                case "$dep" in /usr/lib/*|/System/*|@rpath/*|@loader_path/*|@executable_path/*) ;; *) echo "BAD REF: $f -> $dep"; bad=1 ;; esac
+              done < <(otool -L "$f" | tail -n +2 | awk '{print $1}')
+            fi
+          done < <(find "$R" -type f)
+          [ "$bad" = 0 ]
+
+          B="$R/pg/bin"
+          echo "== initdb"
+          "$B/initdb" -D "$W/data" -U postgres --auth=trust -E UTF8 --locale=C >/dev/null
+          echo "== start"
+          "$B/pg_ctl" -D "$W/data" -l "$W/pg.log" -w -t 60 \
+            -o "-p $PORT -k $SOCK -c listen_addresses=localhost -c shared_preload_libraries=pg_cron -c cron.database_name=postgres" start \
+            || { cat "$W/pg.log"; exit 1; }
+          trap '"$B/pg_ctl" -D "$W/data" -m fast stop || true; kill ${PGRST_PID:-} 2>/dev/null || true' EXIT
+          "$B/pg_isready" -h "$SOCK" -p $PORT
+          PSQL=("$B/psql" -h "$SOCK" -p $PORT -U postgres -d postgres -v ON_ERROR_STOP=1 -X)
+          "${PSQL[@]}" -c 'create extension vector' -c 'create extension pg_cron' -c 'create extension pgcrypto' \
+            -c 'create extension "uuid-ossp"' -c 'create extension pg_stat_statements' -c 'create extension citext' \
+            -c 'create extension pg_trgm' -c 'create extension hstore' -c 'create extension ltree' \
+            -c 'create extension unaccent' -c 'create extension fuzzystrmatch' -c 'create extension btree_gin' \
+            -c 'create extension btree_gist'
+          "${PSQL[@]}" -At -c "select version()" \
+            -c "select '[1,2]'::vector" \
+            -c "select '[1,2,3]'::vector <-> '[3,2,1]'::vector" \
+            -c "select encode(digest('x','sha256'),'hex')" \
+            -c "select uuid_generate_v4() is not null, gen_random_uuid() is not null" \
+            -c "select unaccent('Hôtel'), similarity('abc','abd') > 0" \
+            -c "select cron.schedule('t', '* * * * *', 'select 1')" \
+            -c "select extname || ' ' || extversion from pg_extension order by 1"
+          "${PSQL[@]}" -c "create table t (id uuid primary key default gen_random_uuid(), e vector(3), n citext)"
+          "$B/pg_dump" -h "$SOCK" -p $PORT -U postgres --schema-only postgres > "$W/schema.sql"
+          grep -q 'CREATE TABLE public.t' "$W/schema.sql"
+          "$B/pg_dump" -h "$SOCK" -p $PORT -U postgres -Fc postgres > "$W/db.dump"
+          "$B/pg_restore" -l "$W/db.dump" >/dev/null
+
+          echo "== postgrest"
+          "$R/bin/postgrest" --version
+          PGRST_DB_URI="postgres://postgres@localhost:$PORT/postgres" PGRST_DB_ANON_ROLE=postgres \
+            PGRST_DB_SCHEMAS=public PGRST_SERVER_PORT=55721 "$R/bin/postgrest" > "$W/pgrst.log" 2>&1 &
+          PGRST_PID=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS "http://localhost:55721/t" >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          [ "$ok" = 1 ] || { cat "$W/pgrst.log"; exit 1; }
+          curl -fsS "http://localhost:55721/t"; echo
+
+          echo "== auth"
+          "$R/bin/auth" version
+          ls "$R/auth/migrations" | wc -l
+          cat "$R/VERSION.json"
+          echo "SELF-TEST OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stitchdb-runtime-${{ matrix.platform }}
+          path: |
+            _out/stitchdb-runtime-${{ matrix.platform }}.tar.gz
+            _out/stitchdb-runtime-${{ matrix.platform }}.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    if: ${{ inputs.release }}
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: stitchdb-runtime-*
+          merge-multiple: true
+      - name: Write runtime-manifest.json
+        run: |
+          set -euo pipefail
+          cd dist
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/runtime-v${RUNTIME_VERSION}"
+          python3 - "$base" <<'PY'
+          import json, os, sys, hashlib
+          base = sys.argv[1]
+          m = {}
+          for f in sorted(os.listdir('.')):
+              if not f.endswith('.tar.gz'):
+                  continue
+              plat = f[len('stitchdb-runtime-'):-len('.tar.gz')]
+              data = open(f, 'rb').read()
+              sha = hashlib.sha256(data).hexdigest()
+              assert open(f + '.sha256').read().split()[0] == sha, f
+              m[plat] = {"url": f"{base}/{f}", "sha256": sha, "bytes": len(data)}
+          json.dump(m, open('runtime-manifest.json', 'w'), indent=2)
+          print(json.dumps(m, indent=2))
+          PY
+      - name: Create release runtime-v${{ env.RUNTIME_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "runtime-v${RUNTIME_VERSION}" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "StitchDB runtime v${RUNTIME_VERSION}" \
+            --notes "Local-development runtime: Postgres ${PG_VERSION} (pgvector ${PGVECTOR_VERSION}, pg_cron ${PGCRON_VERSION}), PostgREST ${POSTGREST_VERSION}, Auth ${AUTH_VERSION}." \
+            dist/*.tar.gz dist/*.sha256 dist/runtime-manifest.json
