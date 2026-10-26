@@ -162,6 +162,18 @@ jobs:
             is_elf "$f" && strip --strip-unneeded "$f"
           done
 
+          set_rpaths() {
+            for f in "$S"/pg/bin/*; do is_elf "$f" && patchelf --set-rpath '$ORIGIN/../lib' "$f"; done
+            for f in "$S"/pg/lib/postgresql/*.so; do patchelf --set-rpath '$ORIGIN/..' "$f"; done
+            for f in "$S"/pg/lib/*.so*; do is_elf "$f" && patchelf --set-rpath '$ORIGIN' "$f"; done
+            if readelf -d "$S/bin/postgrest" | grep -q NEEDED; then
+              patchelf --set-rpath '$ORIGIN/../pg/lib' "$S/bin/postgrest"
+            fi
+          }
+          # point everything at pg/lib first, so ldd resolves e.g. postgrest's libpq to ours
+          # (and we don't drag in the system libpq's kerberos/ldap/gnutls deps)
+          set_rpaths
+
           # bundle every non-glibc shared lib (repeat so deps of bundled libs are picked up)
           for pass in 1 2 3 4; do
             while IFS= read -r f; do
@@ -176,12 +188,7 @@ jobs:
             done < <(find "$S" -type f)
           done
 
-          for f in "$S"/pg/bin/*; do is_elf "$f" && patchelf --set-rpath '$ORIGIN/../lib' "$f"; done
-          for f in "$S"/pg/lib/postgresql/*.so; do patchelf --set-rpath '$ORIGIN/..' "$f"; done
-          for f in "$S"/pg/lib/*.so*; do is_elf "$f" && patchelf --set-rpath '$ORIGIN' "$f"; done
-          if readelf -d "$S/bin/postgrest" | grep -q NEEDED; then
-            patchelf --set-rpath '$ORIGIN/../pg/lib' "$S/bin/postgrest"
-          fi
+          set_rpaths
           ls -la "$S/pg/lib"
 
       - name: Make relocatable (macOS)
