@@ -1,6 +1,6 @@
 {
   "name": "stitchdb-cli",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "StitchDB CLI: local development without Docker, migrations, type generation, Edge Functions and preview branches",
   "license": "MIT",
   "homepage": "https://stitchdb.com/docs/cli",
