@@ -44,6 +44,7 @@ stitchdb network-restrictions set 203.0.113.7 198.51.100.0/24
 stitchdb branches masking set public.customers.email=email
 stitchdb domains add api.example.com && stitchdb domains check api.example.com
 stitchdb vercel link my-next-app --prefix NEXT_PUBLIC_
+stitchdb cloudflare link my-worker --service-key     # Workers / Pages variables; CLOUDFLARE_API_TOKEN
 stitchdb github link acme/app --production-branch main
 stitchdb orgs members list | orgs invitations create bob@example.com --role developer
 stitchdb orgs tokens create --name provisioning --scopes projects:read,projects:write
@@ -81,4 +82,35 @@ stitchdb search products "red running shoes"
 stitchdb flags evaluate --user-id <uuid> --attributes '{"country":"DE"}'
 ```
 
-A feature that is turned off answers with a hint to turn it on in Studio.
+A feature that is turned off answers with a hint to turn it on in Studio (or with the commands below).
+
+## Dashboard features (access tokens)
+
+Everything the dashboard sets up, through the Management API with your access token and its scopes:
+
+```sh
+stitchdb backups list | create | pitr | jobs          # also: backups restore <id> | download <id> [--files] | export
+stitchdb backups restore-time 2026-11-01T14:30:00Z --branch before-incident
+stitchdb backups restore-table public.orders --time 2026-11-01T09:00:00Z --mode merge --where "id = 4"
+stitchdb compute sizes && stitchdb compute set <size key>   # billed from the prepaid balance; also compute get | estimate
+stitchdb projects restart
+stitchdb replicas list | add | remove <node>          # replicas auto get | auto set enabled=true max_replicas=2
+stitchdb budget get | set --file budget.json | delete | test
+stitchdb export start | list | import | restore <id> | delete <id>
+stitchdb cron create cleanup --schedule '0 3 * * *' --command 'select purge_old()'   # cron list | runs | update | delete
+stitchdb queues create jobs && stitchdb queues send jobs '{"id":1}'   # queues list | messages | read | archive | delete-message
+stitchdb flags create new-checkout && stitchdb flags update new-checkout --enabled   # flags status | on | off | stats | history | restore | test | segments …
+stitchdb rate-limits set --file rules.json            # rate-limits get | sql install | sql remove
+stitchdb inbound endpoints create --provider stripe --secret "$STRIPE_WEBHOOK_SECRET"   # inbound status | on | off | events list | redeliver …
+stitchdb status-page incidents create --title "Slow API" --impact minor --message "Looking into it"   # status-page get | on | set | subscribers …
+stitchdb push configure --ios-p8 AuthKey.p8 --key-id ABC123DEFG --team-id XYZ987TEAM --bundle-id com.example.app   # push settings | test | disable
+stitchdb purchases configure --file iap.json          # purchases settings | webhook-test | retry | disable
+stitchdb links create --path /invite/42               # links status | on | off | settings set | list | get | update | delete
+stitchdb metering stripe customers set acme=cus_123   # metering status | on | off | settings set | stripe set | stripe retry
+stitchdb monitors create nightly --schedule '0 3 * * *' --grace 30m   # monitors setup | on | off | alerts set | update | rotate | test-alert
+stitchdb crashes alerts set new_issue=true            # crashes settings | on | off | test-alert
+stitchdb auth sso add --metadata-url https://idp.example.com/metadata --domain example.com   # auth sso list | update | remove
+stitchdb recycle-bin enable orders && stitchdb recycle-bin restore 11 12   # recycle-bin list | disable | purge
+stitchdb history enable orders && stitchdb history revert 4   # history list | disable
+stitchdb shared-views create --name "Open orders" --table orders --columns id,total   # shared-views list | members add …
+```
