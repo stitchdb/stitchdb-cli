@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// StitchDB CLI: local development, migrations, type generation, Edge Functions, secrets and preview branches.
+// StitchDB CLI: local development, migrations, type generation, Edge Functions, secrets, preview branches, project and
+// organization management, logs, webhooks, AI agent keys and app features (crashes, analytics, jobs, push, metering).
 'use strict';
 const [major] = process.versions.node.split('.').map(Number);
 if (major < 18) { console.error('stitchdb needs Node.js 18 or newer (you have ' + process.versions.node + ').'); process.exit(1); }
