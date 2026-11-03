@@ -73,8 +73,10 @@ async function main() {
     if (flags.output === 'json') flags.json = true;
   }
   U.state.json = !!flags.json; U.state.debug = !!flags.debug;
+  const notify = require('../lib/update-check').start(pkg.version, { json: U.state.json });
   const data = await cmd.run({ flags, args: pos });
   if (data !== undefined && U.state.json) U.output(data);
+  await notify();
 }
 
 main().catch((e) => {

@@ -18,6 +18,9 @@ stitchdb import "postgresql://…"   # copy another Postgres database in (live c
 stitchdb sourcemaps upload dist --release 1.4.0   # readable crash stacks for that release
 ```
 
+Update with `npm install -g stitchdb-cli@latest`. The CLI checks for a new version at most once a day and says so in the
+terminal (never in `--json` output, pipes or CI; turn it off with `STITCHDB_NO_UPDATE_CHECK=1`).
+
 Requires Node.js 18+ on macOS or Linux (Windows: use WSL). Local development needs no Docker: the first `stitchdb start`
 downloads a small native runtime (about 40 MB) once into `~/.stitchdb/runtime`. Each project folder or git worktree gets its own
 database and ports, and idle services stop after 10 minutes.
