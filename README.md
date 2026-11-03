@@ -114,3 +114,57 @@ stitchdb recycle-bin enable orders && stitchdb recycle-bin restore 11 12   # rec
 stitchdb history enable orders && stitchdb history revert 4   # history list | disable
 stitchdb shared-views create --name "Open orders" --table orders --columns id,total   # shared-views list | members add …
 ```
+
+## Auth, e-mail and sign-in
+
+Secrets (SMTP password, provider secrets, API keys) are read hidden, or from `--secret-stdin` / `--secret-file`, so they
+never land in shell history. The API stores them encrypted and never returns them.
+
+```sh
+stitchdb auth smtp set --host smtp.example.com --port 587 --user apikey --from no-reply@example.com --sender-name "Example"
+stitchdb auth smtp get | remove
+stitchdb auth templates set recovery --html recovery.html --subject "Reset your password"   # templates test <kind>
+stitchdb auth email-domain add domain=mail.example.com && stitchdb auth email-domain verify   # e-mails from your own domain
+stitchdb auth providers enable github --client-id Iv1.abc123       # the client secret is asked for; providers list | disable
+stitchdb auth sms set twilio account_sid=AC123 message_service_sid=MG456 && stitchdb auth phone on
+stitchdb auth email on | off       # also: auth signup on|off, auth autoconfirm on|off, auth anonymous on|off
+stitchdb auth users list | get | create | update | delete | sign-out | recovery-link | send-recovery | send-magic-link
+stitchdb auth invite email=new@example.com
+stitchdb auth orgs status | on | off | settings | list | get
+stitchdb auth signup-protection set block_disposable=true       # hosted-login status | on | off | set
+```
+
+## Database, storage and the rest of the dashboard
+
+```sh
+stitchdb db tables | columns public.todos | views | functions | triggers | indexes | policies | extensions | connections
+stitchdb db rows public.todos limit=20 && stitchdb db rows insert public.todos title="Buy milk"   # rows update | delete --pk '{"id":1}' | export
+stitchdb db tables create --file table.json          # tables update | drop, columns add | update | drop, indexes create | drop …
+stitchdb db extensions install pg_trgm               # policies create | update | drop, triggers enable | disable | drop
+stitchdb db roles create name=reporter preset=read   # roles update | delete; db rls users | rows | explain
+stitchdb vault create name=stripe_key --secret-stdin < key.txt   # vault list | update | delete (values stay in the dashboard)
+stitchdb sql snippets | sql history                  # sql-http status | on | off | keys create | keys revoke; test-data …
+stitchdb storage buckets create name=avatars public=true && stitchdb storage ls avatars   # storage mv | rm | sign | mkdir | s3 …
+stitchdb stripe connect tables='["customers"]' --secret-stdin   # stripe status | backfill | disconnect
+stitchdb realtime history on days=7 | search status | jobs on | analytics on | sync tables add public.notes | collab on
+stitchdb reports create --file report.json           # reports list | preview | run | runs …; health-alerts status | set | test
+stitchdb typegen set languages='["typescript","swift"]' && stitchdb typegen regenerate
+```
+
+## Account
+
+```sh
+stitchdb billing | billing invoices | billing cap set cap_cents=5000 | billing spend-cap enabled=true
+stitchdb support open subject="Slow queries" body="Since 10:00 UTC" project_ref=<ref>   # support list | get | reply | close
+stitchdb servers add name=box1 host=203.0.113.7 region=eu --secret-stdin   # servers list | get | log | move | remove …
+stitchdb compute catalog && stitchdb compute servers resize 12 size_key=ccx33
+stitchdb ai ask "Why is my orders query slow?"       # ai status | ai chat
+stitchdb orgs rename "Acme Inc" && stitchdb orgs invitations resend <id>
+```
+
+Anything else in the Management API (https://stitchdb.com/docs/api):
+
+```sh
+stitchdb api GET /projects/<ref>/database/tables --query schema=public
+stitchdb api PATCH /projects/<ref>/config/auth site_url=https://app.example.com
+```
